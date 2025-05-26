@@ -16,15 +16,22 @@ This directory contains different approaches to implementing Multi-WAN failover 
 
 ### 3. **Standalone MWAN Daemon** (`standalone-mwan-daemon/`)
 - **Purpose**: Independent MWAN system that survives IPFire updates
-- **Status**: ✅ Recommended solution
+- **Status**: ✅ Functional solution
 - **Reason**: Update-proof, non-intrusive, proper system integration
+
+### 4. **Universal MWAN Daemon** (`universal-mwan-daemon/`) ⭐ **RECOMMENDED**
+- **Purpose**: Connection-type agnostic MWAN with enhanced testing
+- **Status**: ✅ Enhanced recommended solution
+- **Reason**: Works with ANY connection type, real connectivity testing, future-proof
 
 ## Current Focus
 
-Working on **Standalone MWAN Daemon** with specific focus on:
-1. **System Override Capability**: Proving it can take control during failover
-2. **GSM 4G Dongle Support**: Real-world scenario with manual configuration
-3. **LAN Device Routing**: Ensuring backup connection works for all LAN devices
+Working on **Universal MWAN Daemon** with specific focus on:
+1. **Enhanced Primary Testing**: Real connectivity testing with parallel routes
+2. **Connection Type Agnostic**: Works with PPPoE, STATIC, DHCP, QMI, etc.
+3. **System Override Capability**: Proven ability to take control during failover
+4. **GSM 4G Dongle Support**: Real-world scenario with manual configuration
+5. **LAN Device Routing**: Ensuring backup connection works for all LAN devices
 
 ## User Requirements
 
