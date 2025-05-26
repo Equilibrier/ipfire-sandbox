@@ -1,0 +1,55 @@
+#!/bin/bash
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+. /etc/init.d/networking/functions.network
+
+# Gather required information from wpa_cli.
+device="$1"
+wpa_state="$2"
+
+# Check if the RED device has been configured to use DHCP or exit immediately.
+eval $(/usr/local/bin/readhash /var/ipfire/ethernet/settings)
+if [ ! "${RED_TYPE}" == "DHCP" ] ; then
+	exit 0
+fi
+
+case "${wpa_state}" in
+	CONNECTED)
+		# Start dhcpcd.
+		dhcpcd_start "${device}"
+
+		exit 0
+		;;
+
+	DISCONNECTED)
+		# Stop dhcpcd.
+		dhcpcd_stop "${device}"
+
+		exit 0
+		;;
+
+	*)
+		# When we ever got here, there is a really big problem.
+		exit 1
+		;;
+esac

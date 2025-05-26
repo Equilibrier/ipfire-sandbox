@@ -1,0 +1,211 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+if [ -e /etc/init.d/leds.user ]; then
+	/etc/init.d/leds.user $*
+	exit ${?}
+fi
+
+# Load ethernet settings
+eval $(/usr/local/bin/readhash /var/ipfire/ethernet/settings)
+
+case "${RED_TYPE}" in
+	PPPOE)
+		RED_DEV="ppp0"
+		;;
+esac
+
+# setup_netdev_trigger LED DEVICE MODE
+setup_netdev_trigger ()
+{
+	if [ -d "/sys/class/leds/$1" ]; then
+		modprobe -q ledtrig-netdev 2>&1 > /dev/null
+		echo "netdev" > /sys/class/leds/$1/trigger
+		echo "$2" >     /sys/class/leds/$1/device_name
+		if [ -e "/sys/class/leds/$1/mode" ]; then
+			echo "$3 $4" >  /sys/class/leds/$1/mode
+		else
+			if [ -f "/sys/class/leds/$1/$3" ]; then
+				echo 1 > /sys/class/leds/$1/$3
+			fi
+			if [ -f "/sys/class/leds/$1/$4" ]; then
+				echo 1 > /sys/class/leds/$1/$4
+			fi
+			if [ -f "/sys/class/leds/$1/$5" ]; then
+				echo 1 > /sys/class/leds/$1/$5
+			fi
+		fi
+	fi
+}
+
+# setup_netdev_trigger LED
+setup_heartbeat_trigger ()
+{
+	if [ -d "/sys/class/leds/$1" ]; then
+		modprobe -q ledtrig-heartbeat 2>&1 > /dev/null
+		echo "heartbeat" >  /sys/class/leds/$1/trigger
+	fi
+}
+
+# disable_led_trigger LED
+disable_led_trigger ()
+{
+	if [ -d "/sys/class/leds/$1" ]; then
+		echo "none" >     /sys/class/leds/$1/trigger
+		echo "0" >        /sys/class/leds/$1/brightness
+	fi
+}
+
+# enable LED
+enable_led ()
+{
+	if [ -d "/sys/class/leds/$1" ]; then
+		echo "1" >        /sys/class/leds/$1/brightness
+	fi
+}
+
+#Handle new APU ACPI Leds introduced on APU2 with bios 4.10.0.0
+if [ -e /sys/class/leds/apu:green:1 ]; then
+	APULED="apu:green:";
+else if [ -e /sys/class/leds/apu1:green:led1 ]; then
+	APULED="apu1:green:led";
+else if [ -e /sys/class/leds/apu2:green:led1 ]; then
+	APULED="apu2:green:led";
+else if [ -e /sys/class/leds/apu3:green:led1 ]; then
+	APULED="apu3:green:led";
+else if [ -e /sys/class/leds/apu4:green:led1 ]; then
+	APULED="apu4:green:led";
+else if [ -e /sys/class/leds/apu5:green:led1 ]; then
+	APULED="apu5:green:led";
+else
+	APULED="apu:";
+fi
+fi
+fi
+fi
+fi
+fi
+
+case "${1}" in
+	start)
+		# Alix LED start
+		setup_heartbeat_trigger alix:1
+		setup_netdev_trigger alix:2 ${RED_DEV} rx
+		setup_netdev_trigger alix:3 ${RED_DEV} tx
+
+		# Apu LED start
+		setup_heartbeat_trigger ${APULED}1
+		setup_netdev_trigger ${APULED}2 ${RED_DEV} rx
+		setup_netdev_trigger ${APULED}3 ${RED_DEV} tx
+
+		# Geos LED start
+		setup_heartbeat_trigger geos:1
+		setup_netdev_trigger geos:2 ${RED_DEV} rx
+		setup_netdev_trigger geos:3 ${RED_DEV} tx
+
+		# Mirabox start
+		setup_heartbeat_trigger mirabox:green:pwr
+		setup_netdev_trigger mirabox:green:stat ${GREEN_DEV} tx rx
+		setup_netdev_trigger mirabox:blue:stat ${BLUE_DEV} tx rx
+
+		# Nanopi R1 start
+		setup_heartbeat_trigger nanopi-r1:red:status
+		setup_netdev_trigger nanopi-r1:green:wan ${RED_DEV} tx rx
+		setup_netdev_trigger nanopi-r1:green:lan ${GREEN_DEV} tx rx
+
+		# Nanopi R2S start
+		setup_heartbeat_trigger nanopi-r2s:red:sys
+		setup_netdev_trigger nanopi-r2s:green:wan ${RED_DEV} tx rx
+		setup_netdev_trigger nanopi-r2s:green:lan ${GREEN_DEV} tx rx
+
+		# Nanopi R4S start
+		setup_heartbeat_trigger nanopi-r4s:green:sys
+		setup_netdev_trigger nanopi-r4s:green:wan ${RED_DEV} tx rx
+		setup_netdev_trigger nanopi-r4s:green:lan ${GREEN_DEV} tx rx
+
+		# OrangePi R1 Plus
+		setup_heartbeat_trigger red:status
+		setup_netdev_trigger green:wan ${RED_DEV} tx rx
+		setup_netdev_trigger green:lan ${GREEN_DEV} tx rx
+
+		exit 0
+	;;
+
+	stop)
+		# Alix LED stop
+		disable_led_trigger alix:1
+		enable_led alix:1
+		disable_led_trigger alix:2
+		disable_led_trigger alix:3
+
+		# Apu LED stop
+		disable_led_trigger ${APULED}1
+		enable_led ${APULED}1
+		disable_led_trigger ${APULED}2
+		disable_led_trigger ${APULED}3
+
+		# Geos LED stop
+		disable_led_trigger geos:1
+		enable_led geos:1
+		disable_led_trigger geos:2
+		disable_led_trigger geos:3
+
+		# Mirabox stop
+		disable_led_trigger mirabox:green:pwr
+		enable_led mirabox:green:pwr
+		disable_led_trigger mirabox:green:stat
+		disable_led_trigger mirabox:blue:stat
+
+		# Nanopi R1 stop
+		disable_led_trigger nanopi-r1:red:status
+		enable_led nanopi-r1:red:status
+		disable_led_trigger nanopi-r1:green:wan
+		disable_led_trigger nanopi-r1:green:lan
+
+		# Nanopi R2S stop
+		disable_led_trigger nanopi-r2s:red:sys
+		enable_led nanopi-r2s:red:sys
+		disable_led_trigger nanopi-r2s:green:wan
+		disable_led_trigger nanopi-r2s:green:lan
+
+		# Nanopi R4S stop
+		disable_led_trigger nanopi-r4s:green:sys
+		enable_led nanopi-r4s:green:sys
+		disable_led_trigger nanopi-r4s:green:wan
+		disable_led_trigger nanopi-r4s:green:lan
+
+		# OrangePi R1 Plus stop
+		disable_led_trigger red:status
+		enable_led red:status
+		disable_led_trigger green:wan
+		disable_led_trigger green:lan
+
+		exit 0
+	;;
+
+	*)
+		echo "Usage: ${0} {start|stop}"
+		exit 1
+	;;
+esac

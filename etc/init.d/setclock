@@ -1,0 +1,74 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+CLOCKPARAMS=
+
+case ${1} in
+	start)
+
+		boot_mesg "Setting system clock..."
+
+		FDT_COMPAT_FILE="/sys/firmware/devicetree/base/compatible"
+		# RTC may not be automatically loaded on some
+		# non-x86 machines
+		if [ -f "${FDT_COMPAT_FILE}" ] && \
+			( grep -q "traverse,ten64" "${FDT_COMPAT_FILE}" ); then
+			modprobe rtc-rx8025
+		fi
+
+		# udev not create the rtc symlink if rtc is in the kernel
+		if [ ! -e /dev/rtc ]; then
+			if [ -e /dev/rtc0 ]; then
+				ln -s rtc0 /dev/rtc
+			fi
+		fi
+
+		hwclock --hctosys ${CLOCKPARAMS} &>/dev/null
+		date
+
+		if [ -e /var/log/messages ]; then
+			LOGTIMESTAMP=`stat --format "%y" /var/log/messages`
+			LOGTIME=`date +%s -d "$LOGTIMESTAMP"`
+			SYSTIME=`date +%s`
+			if [ $SYSTIME -lt $LOGTIME ]; then
+				boot_mesg "Warning! clock runs later than last log access. Check battery/rtc!"
+				date -s "$LOGTIMESTAMP"
+				echo_warning;
+			else
+				echo_ok;
+			fi
+		fi
+		;;
+
+	stop)
+		boot_mesg "Setting hardware clock..."
+		hwclock --systohc ${CLOCKPARAMS} &>/dev/null
+		evaluate_retval
+		;;
+
+	*)
+		echo "Usage: ${0} {start} {stop}"
+		;;
+
+esac

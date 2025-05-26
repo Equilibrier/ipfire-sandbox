@@ -1,0 +1,189 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. $rc_functions
+
+eval $(/usr/local/bin/readhash /var/ipfire/main/settings)
+
+scan_for_sensors() {
+	touch /var/lock/sensors_search
+	# pre scan and try to load modules
+	"yes" | /usr/sbin/sensors-detect > /dev/null 2>&1
+	if [ -e /etc/sysconfig/lm_sensors ]; then
+
+		# Module load
+		. /etc/sysconfig/lm_sensors
+		for modul in $BUS_MODULES $HWMON_MODULES ; do
+			modprobe $modul > /dev/null 2>&1;
+		done
+	fi
+
+	# Final scan
+	"yes" | /usr/sbin/sensors-detect > /dev/null 2>&1
+
+	if [ ! -e /etc/sysconfig/lm_sensors ]; then
+		echo "#No Sensors detected " > /etc/sysconfig/lm_sensors
+	fi
+	rm /var/lock/sensors_search
+}
+
+if [ "$RRDLOG" = '' ]; then
+	RRDLOG=/var/log/rrd
+fi
+
+case "$1" in
+	start)
+		if use_ramdisk; then
+			boot_mesg "Mounting RRD ramdisk..."
+			mount_ramdisk "${RRDLOG}"
+			evaluate_retval
+		fi
+
+		# If run from init and collectd alrady started then exit silent
+		if [ "$(basename $0)" != "collectd" ]; then
+			if [ "$(ps -A | grep " collectd$")" != "" ]; then
+				exit 0
+			fi
+		fi
+
+		# ARM does not support to scan for sensors. In that case,
+		# we create an empty configuration file.
+		machine=$(uname -m)
+		if [ "${machine:0:3}" = "arm" ]; then
+			touch /etc/sysconfig/lm_sensors
+		fi
+		if [ "${machine:0:7}" = "aarch64" ]; then
+			touch /etc/sysconfig/lm_sensors
+		fi
+
+		# Do not search for sensors when running on AWS
+		if [ -e "/var/run/aws-instance-id" ]; then
+			touch /etc/sysconfig/lm_sensors
+		fi
+
+		# At first run search for sensors with sensors-detect
+		if [ ! -e /etc/sysconfig/lm_sensors ]; then
+			# Don't run at next boot again
+			touch /etc/sysconfig/lm_sensors
+			boot_mesg -n "Searching for Sensors..."
+			scan_for_sensors &
+			sleep 2
+		fi
+
+		if [ -e /var/lock/sensors_search ]; then
+			for (( i=1; i<30; i++)) do
+				if [ ! -e /var/lock/sensors_search ]; then
+					break;
+				fi
+				boot_mesg -n "."
+				sleep 2
+			done
+		fi
+		boot_mesg ""
+
+		# Load sensor modules only first start
+		if [ ! -e /var/lock/sensors_modules ]; then
+			touch /var/lock/sensors_modules
+
+			boot_mesg -n "Loading Sensor Modules: "
+			. /etc/sysconfig/lm_sensors
+			for modul in $BUS_MODULES $HWMON_MODULES ; do
+			modprobe $modul > /dev/null 2>&1;
+				if [ ${?} = 0 ]; then
+					boot_mesg -n "$SUCCESS$modul$NORMAL ";
+				else
+					boot_mesg -n "$WARNING$modul$NORMAL ";
+				fi
+			done
+			boot_mesg;
+			echo_ok;
+		fi
+
+		# Enable sensors plugin if sensors found
+		if [ "$( sensors 2>&1 | grep 'No sensors found!' | wc -l )" == "1" ]; then
+			sed -i -e "s|^LoadPlugin sensors|#LoadPlugin sensors|g" /etc/collectd.conf
+		else
+			sed -i -e "s|^#LoadPlugin sensors|LoadPlugin sensors|g" /etc/collectd.conf
+		fi
+
+		# Enable thermal plugin if thermal_zone found
+		if [ ! -e  /sys/class/thermal/thermal_zone0 ]; then
+			sed -i -e 's|^include "/etc/collectd.thermal"$|#include "/etc/collectd.thermal"|g' /etc/collectd.conf
+		else
+			sed -i -e 's|^#include "/etc/collectd.thermal"$|include "/etc/collectd.thermal"|g' /etc/collectd.conf
+		fi
+
+		# Enable cpufreq plugin if cpufreq found
+		if [ ! -e  /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+			sed -i -e "s|^LoadPlugin cpufreq|#LoadPlugin cpufreq|g" /etc/collectd.conf
+		else
+			sed -i -e "s|^#LoadPlugin cpufreq|LoadPlugin cpufreq|g" /etc/collectd.conf
+		fi
+
+		# Enable swap plugin if swap found
+		if [ "$(swapon -s | wc -l)" == "0" ]; then
+			sed -i -e "s|^LoadPlugin swap|#LoadPlugin swap|g" /etc/collectd.conf
+		else
+			sed -i -e "s|^#LoadPlugin swap|LoadPlugin swap|g" /etc/collectd.conf
+		fi
+
+		# sync after config update...
+		sync
+
+		if [ $(date +%Y) -gt 2011 ]; then
+			boot_mesg "Starting Collection daemon..."
+			/usr/sbin/collectd -C /etc/collectd.conf
+			evaluate_retval
+		else
+			boot_mesg "collectd: cannot start with incorrect time ($(date))."
+			echo_warning;
+		fi
+		;;
+	stop)
+		boot_mesg "Stopping Collection daemon..."
+		killproc /usr/sbin/collectd
+		evaluate_retval
+
+		# Umount the ramdisk (if any)
+		umount_ramdisk "${RRDLOG}"
+		;;
+	restart)
+		${0} stop
+		sleep 1
+		${0} start
+		;;
+	status)
+		statusproc /usr/sbin/collectd
+		;;
+
+	backup)
+		# Backup all data if ramdisk is used
+		if mountpoint "${RRDLOG}" &>/dev/null; then
+			${0} restart
+		fi
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart|status|backup}"
+		exit 1
+		;;
+esac

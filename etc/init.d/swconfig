@@ -1,0 +1,76 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+if [ -e /etc/init.d/swconfig.user ]; then
+	/etc/init.d/swconfig.user $*
+	exit ${?}
+fi
+
+if [ -e /var/ipfire/ethernet/swconfig_mac ]; then
+SWMAC=`cat /var/ipfire/ethernet/swconfig_mac`
+else
+# Generate a random local administrated mac address for vlan swconfig.
+SWMAC=`printf "%1x2:%02x:%02x:%02x:%02x" $[RANDOM%16] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+echo $SWMAC > /var/ipfire/ethernet/swconfig_mac
+fi
+
+case "${1}" in
+	start)
+		case `cat /proc/device-tree/model 2>/dev/null` in
+			"Lamobo R1")
+				#
+				# Lamobo R1 aka BPi R1 Routerboard
+				#
+				# Speaker | LAN4 | LAN3 | LAN2 | LAN1 || WAN  | HDMI
+				# SW-Port |  P2  |  P1  |  P0  |  P4  ||  P3  |
+				# MAC-Add |  14  |  13  |  12  |  11  ||  10  |
+				#
+				# Switch-Port P8 - internal CPU Port
+
+				# stop udev...
+				killall udevd
+
+				device=`ls /sys/class/net/*/device/driver/1c50000.ethernet/net | head -1`
+				ip link set $device up
+
+				# set local mac addresses.
+				ip link set dev wan  address $SWMAC:10
+				ip link set dev lan1 address $SWMAC:11
+				ip link set dev lan2 address $SWMAC:12
+				ip link set dev lan3 address $SWMAC:13
+				ip link set dev lan4 address $SWMAC:14
+
+				# start udev...
+				killall udevd
+				/etc/init.d/udev start
+			;;
+		esac 2> /dev/null
+		exit 0
+	;;
+
+	*)
+		echo "Usage: ${0} {start}"
+		exit 1
+	;;
+esac

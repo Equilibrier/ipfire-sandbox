@@ -1,0 +1,5 @@
+#!/bin/bash
+
+/usr/local/bin/ipsecctrl D &
+
+exit 0

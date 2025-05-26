@@ -1,0 +1,199 @@
+#! /bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+NAME=nut
+DESC="Network UPS Tools"
+DEFAULT=/etc/sysconfig/nut
+CONFIG=/etc/nut/nut.conf
+
+. /etc/sysconfig/rc
+. $rc_functions
+
+# set upsd specific options. use "man upsd" for more info
+UPSD_OPTIONS=""
+
+# set upsmon specific options. use "man upsmon" for more info
+UPSMON_OPTIONS=""
+
+# Include defaults if available (transition period)
+if [ -f $DEFAULT ] ; then
+	. $DEFAULT
+fi
+
+# Include NUT nut.conf
+if [ -f $CONFIG ] ; then
+	. $CONFIG
+fi
+
+# Explicitly require the configuration to be done in /etc/nut/nut.conf
+if [ "x$MODE" = "xnone" ] ; then
+    log_failure_msg "$NAME disabled, please adjust the configuration to your needs "
+    log_failure_msg "and then set MODE to a suitable value in $CONFIG to enable it."
+    # exit success to avoid breaking the install process!
+    exit 0
+fi
+
+upsd=/usr/sbin/upsd
+upsdrvctl=/usr/sbin/upsdrvctl
+upsmon=/usr/sbin/upsmon
+log=">/dev/null 2>/dev/null"
+
+start_stop_server () {
+  case "$MODE" in
+    standalone|netserver)
+      case "$1" in
+        start)
+          ! $upsdrvctl start >/dev/null 2>&1 && boot_mesg "(upsdrvctl failed)"
+          $upsd $UPSD_OPTIONS >/dev/null 2>&1
+          evaluate_retval
+          ;;
+        stop)
+          $upsd -c stop >/dev/null 2>&1
+          evaluate_retval
+          ! $upsdrvctl stop >/dev/null 2>&1 && boot_mesg "(upsdrvctl failed)"
+          ;;
+      esac
+      ;;
+    none|netclient|*)
+      return 1
+      ;;
+  esac
+}
+
+start_stop_client () {
+  case "$MODE" in
+    standalone|netserver|netclient)
+      case "$1" in
+        start)
+          $upsmon $UPSMON_OPTIONS >/dev/null 2>&1
+          evaluate_retval
+          ;;
+        stop)
+          $upsmon -c stop >/dev/null 2>&1
+          evaluate_retval
+          ;;
+      esac
+      ;;
+    none|*)
+      return 1
+      ;;
+  esac
+}
+
+status_server () {
+  case "$MODE" in
+    standalone|netserver)
+      statusproc $upsd
+      statusproc $upsmon
+      ;;
+    none|netclient|*)
+      return 1
+      ;;
+  esac
+}
+
+status_client () {
+  case "$MODE" in
+    standalone|netclient)
+      statusproc $upsmon
+      ;;
+    none|*)
+      return 1
+      ;;
+  esac
+}
+
+case "$1" in
+
+  start)
+    boot_mesg "Starting $DESC ..."
+    start_stop_server start
+    start_stop_client start
+    ;;
+
+  stop)
+    boot_mesg "Stopping $DESC ..."
+    start_stop_server stop
+    start_stop_client stop
+    ;;
+
+  reload)
+    $upsd   -c reload >/dev/null 2>&1
+    $upsmon -c reload >/dev/null 2>&1
+    ;;
+
+  status)
+    status_server
+    status_client
+    ;;
+
+  restart|force-reload)
+    boot_mesg "Restarting $DESC ..."
+    start_stop_client stop
+    start_stop_server stop
+    sleep 5
+    start_stop_server start
+    start_stop_client start
+    ;;
+
+  poweroff)
+    flag=`sed -ne 's#^ *POWERDOWNFLAG *\(.*\)$#\1#p' /etc/nut/upsmon.conf`
+    wait_delay=`sed -ne 's#^ *POWEROFF_WAIT= *\(.*\)$#\1#p' $CONFIG`
+    if [ -f "$flag" ] ; then
+      if $upsmon -K >/dev/null 2>&1 ; then
+	boot_mesg "Shutting down the UPS ..."
+	sleep 1
+	if $upsdrvctl shutdown ; then
+	  sleep 5
+	  boot_mesg "Waiting for UPS to cut the power"
+	else
+	  boot_mesg "Shutdown failed."
+	  boot_mesg "Waiting for UPS batteries to run down"
+	fi
+	if [ "$wait_delay" ] ; then
+	  boot_mesg " (will reboot after $wait_delay) ..."
+	  sleep "$wait_delay"
+	  /etc/init.d/reboot stop
+	fi
+      else
+        boot_mesg "Power down flag is not set (UPS shutdown not needed)"
+      fi
+    else
+        if [ -z "$flag" ] ; then
+	  boot_mesg "##########################################################"
+	  boot_mesg "## POWERDOWNFLAG is not defined in /etc/nut/upsmon.conf ##"
+	  boot_mesg "##                                                      ##"
+	  boot_mesg "## Please read the Manual page upsmon.conf(5)           ##"
+	  boot_mesg "##########################################################"
+    	fi
+    fi
+    ;;
+
+  *)
+    N=/etc/init.d/$NAME
+    echo "Usage: $N {start|stop|status|reload|restart|force-reload|poweroff}" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

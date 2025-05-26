@@ -1,0 +1,64 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+case "${1}" in
+	start)
+		boot_mesg "Remounting root file system in read-write mode..."
+		mount -n -o remount,rw / &>/dev/null
+		evaluate_retval
+
+		# Remove fsck-related file system watermarks.
+		rm -f /fastboot /forcefsck
+
+		# This will mount all filesystems that do not have _netdev in
+		# their option list.  _netdev denotes a network filesystem.
+		boot_mesg "Mounting remaining file systems..."
+		mount -a -O no_netdev &>/dev/null
+		evaluate_retval
+
+		# ExtraHD
+		boot_mesg "Mounting custom file systems..."
+		/var/ipfire/extrahd/bin/extrahd.pl mount
+		evaluate_retval
+		;;
+
+	stop)
+		boot_mesg "Syncing discs..."
+		sync
+		evaluate_retval
+
+		# ExtraHD
+		boot_mesg "Unmounting custom file systems..."
+		/var/ipfire/extrahd/bin/extrahd.pl umount
+		evaluate_retval
+
+		boot_mesg "Unmounting all other currently mounted file systems..."
+		umount -a -d -r &>/dev/null
+		evaluate_retval
+		;;
+	*)
+		echo "Usage: ${0} {start|stop}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,80 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+write_resolv_conf() {
+	(
+		[ -n "${DOMAINNAME}" ] && echo "search ${DOMAINNAME}"
+		echo "nameserver 127.0.0.1"
+		echo "options edns0 trust-ad"
+	) > /etc/resolv.conf
+}
+
+write_hosts() {
+	(
+		echo "127.0.0.1	localhost.localdomain localhost"
+	) > /etc/hosts
+}
+
+case "${1}" in
+	start)
+		eval $(/usr/local/bin/readhash /var/ipfire/main/settings)
+		boot_mesg "Bringing up the loopback interface..."
+		ip addr add 127.0.0.1/8 label lo dev lo
+		ip link set lo up
+		evaluate_retval
+
+		boot_mesg "Setting hostname to ${HOSTNAME}.${DOMAINNAME}..."
+		hostname "${HOSTNAME}.${DOMAINNAME}"
+		evaluate_retval
+
+		# Update hosts
+		write_hosts
+
+		# Update resolv.conf
+		write_resolv_conf
+		;;
+
+	stop)
+		boot_mesg "Bringing down the loopback interface..."
+		ip link set lo down
+		evaluate_retval
+		;;
+
+	restart)
+		${0} stop
+		sleep 1
+		${0} start
+		;;
+
+	status)
+		eval $(/usr/local/bin/readhash /var/ipfire/main/settings)
+		echo "Hostname is: $(hostname)"
+		ip link show lo
+		;;
+
+	*)
+		echo "Usage: ${0} {start|stop|restart|status}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,230 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+PATH=/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:/usr/sbin; export PATH
+
+eval $(/usr/local/bin/readhash /var/ipfire/suricata/settings)
+eval $(/usr/local/bin/readhash /var/ipfire/ethernet/settings)
+
+# Name of the firewall chains.
+IPS_INPUT_CHAIN="IPS_INPUT"
+IPS_FORWARD_CHAIN="IPS_FORWARD"
+IPS_OUTPUT_CHAIN="IPS_OUTPUT"
+
+# Optional options for the Netfilter queue.
+NFQ_OPTS="--queue-bypass "
+
+# Array containing the 4 possible network zones.
+network_zones=( red green blue orange ovpn )
+
+# Array to store the network zones weather the IPS is enabled for.
+enabled_ips_zones=()
+
+# PID file of suricata.
+PID_FILE="/var/run/suricata.pid"
+
+# Function to get the amount of CPU cores of the system.
+function get_cpu_count {
+	CPUCOUNT=0
+
+	# Loop through "/proc/cpuinfo" and count the amount of CPU cores.
+	while read line; do
+		[ "$line" ] && [ -z "${line%processor*}" ]  && ((CPUCOUNT++))
+	done </proc/cpuinfo
+
+	# Limit to a maximum of 16 cores, because suricata does not support more than
+	# 16 netfilter queues at the moment.
+	if [ $CPUCOUNT -gt "16" ]; then
+		echo "16"
+	else
+		echo $CPUCOUNT
+	fi
+}
+
+# Function to flush the firewall chains.
+function flush_fw_chain {
+	# Call iptables and flush the chains
+	iptables -w -F "$IPS_INPUT_CHAIN"
+	iptables -w -F "$IPS_FORWARD_CHAIN"
+	iptables -w -F "$IPS_OUTPUT_CHAIN"
+}
+
+# Function to create the firewall rules to pass the traffic to suricata.
+function generate_fw_rules {
+	cpu_count=$(get_cpu_count)
+
+	# Loop through the array of network zones.
+	for zone in "${network_zones[@]}"; do
+		# Convert zone into upper case.
+		zone_upper=${zone^^}
+
+		# Generate variable name for checking if the IDS is
+		# enabled on the zone.
+		enable_ids_zone="ENABLE_IDS_$zone_upper"
+
+		# Check if the IDS is enabled for this network zone.
+		if [ "${!enable_ids_zone}" == "on" ]; then
+			# Check if the current processed zone is "red" and the configured type is PPPoE dialin.
+			if [ "$zone" == "red" ] && [ "$RED_TYPE" == "PPPOE" ]; then
+				# Set device name to ppp0.
+				network_device="ppp0"
+			elif [ "$zone" == "ovpn" ]; then
+				# Get all virtual net devices because the RW server and each
+				# N2N connection creates it's own tun device.
+				for virt_dev in /sys/devices/virtual/net/*; do
+					# Cut-off the directory.
+					dev="${virt_dev##*/}"
+
+					# Only process tun devices.
+					if [[ $dev =~ "tun" ]]; then
+						# Add the network device to the array of enabled zones.
+						enabled_ips_zones+=( "$dev" )
+					fi
+				done
+
+				# Process next zone.
+				continue
+			else
+				# Generate variable name which contains the device name.
+				zone_name="$zone_upper"
+				zone_name+="_DEV"
+
+				# Grab device name.
+				network_device=${!zone_name}
+			fi
+
+			# Add the network device to the array of enabled zones.
+			enabled_ips_zones+=( "$network_device" )
+		fi
+	done
+
+	# Assign NFQ_OPTS
+	NFQ_OPTIONS=$NFQ_OPTS
+
+	# Check if there are multiple cpu cores available.
+	if [ "$cpu_count" -gt "1" ]; then
+		# Balance beetween all queues.
+		NFQ_OPTIONS+="--queue-balance 0:$(($cpu_count-1))"
+		NFQ_OPTIONS+=" --queue-cpu-fanout"
+	else
+		# Send all packets to queue 0.
+		NFQ_OPTIONS+="--queue-num 0"
+	fi
+
+	# Flush the firewall chains.
+	flush_fw_chain
+
+	# Check if the array of enabled_ips_zones contains any elements.
+	if [[ ${enabled_ips_zones[@]} ]]; then
+		# Loop through the array and create firewall rules.
+		for enabled_ips_zone in "${enabled_ips_zones[@]}"; do
+			# Create rules queue input and output related traffic and pass it to the IPS.
+			iptables -w -A "$IPS_INPUT_CHAIN" -i "$enabled_ips_zone" -j NFQUEUE $NFQ_OPTIONS
+			iptables -w -A "$IPS_OUTPUT_CHAIN" -o "$enabled_ips_zone" -j NFQUEUE $NFQ_OPTIONS
+
+			# Create rules which are required to handle forwarded traffic.
+			for enabled_ips_zone_forward in "${enabled_ips_zones[@]}"; do
+				iptables -w -A "$IPS_FORWARD_CHAIN" -i "$enabled_ips_zone" -o "$enabled_ips_zone_forward" -j NFQUEUE $NFQ_OPTIONS
+			done
+		done
+	fi
+}
+
+case "$1" in
+        start)
+		# Get amount of CPU cores.
+		cpu_count=$(get_cpu_count)
+
+		# Numer of NFQUES.
+		NFQUEUES="-q 0"
+
+		if [ $cpu_count -gt "1" ]; then
+			NFQUEUES+=":$(($cpu_count-1))"
+		fi
+
+		# Check if the IDS should be started.
+		if [ "$ENABLE_IDS" == "on" ]; then
+			# Start the IDS.
+			boot_mesg "Starting Intrusion Detection System..."
+			/usr/bin/suricata -c /etc/suricata/suricata.yaml -D $NFQUEUES >/dev/null 2>/dev/null
+			evaluate_retval
+
+			# Allow reading the pidfile.
+			chmod 644 $PID_FILE
+
+			# Flush the firewall chain
+			flush_fw_chain
+
+			# Generate firewall rules
+			generate_fw_rules
+		fi
+	;;
+
+        stop)
+		boot_mesg "Stopping Intrusion Detection System..."
+		killproc -p $PID_FILE /var/run
+
+		# Flush firewall chain.
+		flush_fw_chain
+
+		# Sometimes suricata not correct shutdown. So killall.
+		killall -KILL /usr/bin/suricata 2>/dev/null
+
+		# Remove suricata control socket.
+		rm /var/run/suricata/* >/dev/null 2>/dev/null
+
+		# Trash remain pid file if still exists.
+		rm -f $PID_FILE >/dev/null 2>/dev/null
+
+		# Don't report returncode of rm if suricata was not started
+		exit 0
+        ;;
+
+        status)
+                statusproc /usr/bin/suricata
+                ;;
+
+        restart)
+                $0 stop
+                $0 start
+                ;;
+	reload)
+		# Send SIGUSR2 to the suricata process to perform a reload
+		# of the ruleset.
+		kill -USR2 $(pidof suricata)
+
+		# Flush the firewall chain.
+		flush_fw_chain
+
+		# Generate firewall rules.
+		generate_fw_rules
+		;;
+
+        *)
+                echo "Usage: $0 {start|stop|restart|reload|status}"
+                exit 1
+                ;;
+esac
+
+chmod 644 /var/log/suricata/* 2>/dev/null

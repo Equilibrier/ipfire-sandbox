@@ -1,0 +1,80 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. $rc_functions
+
+eval $(/usr/local/bin/readhash /var/ipfire/time/settings)
+
+case "$1" in
+	start)
+		if [ "$ENABLESETONBOOT" == "on" ]; then
+			boot_mesg -n "Setting time on boot..."
+			pidof wpa_supplicant dhcpcd 2>&1 > /dev/null
+			if [ "${?}" == "0" ]; then
+				if [ ! -e /var/ipfire/red/active ]; then
+					boot_mesg ""
+					boot_mesg -n "Waiting for red connection"
+					for (( i=30; i>1; i-- )) do
+						if [ -e /var/ipfire/red/active ]; then
+							break;
+						fi
+						boot_mesg -n "."
+						sleep 2
+					done
+					sleep 5
+				fi
+			fi
+			if [ -e /var/ipfire/red/active ]; then
+				boot_mesg ""
+				loadproc /usr/local/bin/settime $(cat /var/ipfire/time/settime.conf)
+			else
+				boot_mesg " ERROR! Not online!"
+				echo_warning
+			fi
+		fi
+
+		echo -e "server	${NTP_ADDR_1} prefer\nserver	${NTP_ADDR_2}" > /etc/ntp/ntpInclude.conf
+
+		boot_mesg "Starting ntpd..."
+		loadproc /usr/bin/ntpd -Ap /var/run/ntpd.pid
+		;;
+
+	stop)
+		boot_mesg "Stopping ntpd..."
+		killproc /usr/bin/ntpd
+		;;
+
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+
+	status)
+		statusproc /usr/bin/ntpd
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart|status}"
+		exit 1
+		;;
+esac

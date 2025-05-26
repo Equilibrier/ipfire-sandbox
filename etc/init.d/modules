@@ -1,0 +1,88 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+# Assure that the kernel has module support.
+[ -e /proc/ksyms -o -e /proc/modules ] || exit 0
+
+case "${1}" in
+	start)
+
+		# If proc is mounted, find the current kernel
+		# message level 
+		if [ -f /proc/sys/kernel/printk ]; then
+			prev_msg=`cat /proc/sys/kernel/printk | \
+					sed 'l 1' | sed -n '2~0p' | \
+					sed 's/\\\//'`
+		else 
+			prev_msg="6"
+		fi
+
+		# Now set the message level to 1 so not to make too 
+		# much noise when loading modules
+		dmesg -n 1
+
+		# Only try to load modules if the user has actually given us
+		# some modules to load.
+		if egrep -qv '^(#|$)' /etc/sysconfig/modules 2>/dev/null
+		then
+
+			# Read in the configuration file.
+			exec 9>&0 < /etc/sysconfig/modules
+
+				boot_mesg -n "Loading modules:" ${INFO}
+
+				while read module args
+				do
+					# Ignore comments and blank lines.
+					case "${module}" in
+						""|\#*) continue ;;
+					esac
+
+					# Attempt to load the module, making
+					# sure to pass any arguments provided.
+					modprobe ${module} ${args} &>/dev/null
+
+					# Print the module name if successful,
+					# otherwise take note.
+					if [ ${?} -eq 0 ]; then
+						boot_mesg -n " ${module}" ${NORMAL}
+					fi
+				done
+
+				boot_mesg "" ${NORMAL}
+				# Print a message about successfully loaded
+				# modules on the correct line.
+				echo_ok
+
+			exec 0>&9 9>&-
+
+		fi
+		# Set the kernel message level back to it's previous value.
+		dmesg -n "${prev_msg}"
+		;;
+	*)
+		echo "Usage: ${0} {start}"
+		exit 1
+		;;
+esac

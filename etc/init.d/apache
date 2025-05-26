@@ -1,0 +1,112 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. $rc_functions
+
+generate_certificates() {
+	if [ ! -f "/etc/httpd/server.key" ]; then
+		boot_mesg "Generating HTTPS RSA server key (this will take a moment)..."
+		openssl genrsa -out /etc/httpd/server.key 4096 &>/dev/null
+		chmod 600 /etc/httpd/server.key
+		evaluate_retval
+	fi
+
+	if [ ! -f "/etc/httpd/server-ecdsa.key" ]; then
+		boot_mesg "Generating HTTPS ECDSA server key..."
+		openssl ecparam -genkey -name secp384r1 -noout \
+			-out /etc/httpd/server-ecdsa.key &>/dev/null
+		chmod 600 /etc/httpd/server-ecdsa.key
+		evaluate_retval
+	fi
+
+	# Generate RSA CSR
+	if [ ! -f "/etc/httpd/server.csr" ]; then
+		sed "s/HOSTNAME/`hostname -f`/" < /etc/certparams | \
+			openssl req -new -key /etc/httpd/server.key \
+				-out /etc/httpd/server.csr &>/dev/null
+	fi
+
+	# Generate ECDSA CSR
+	if [ ! -f "/etc/httpd/server-ecdsa.csr" ]; then
+		sed "s/HOSTNAME/`hostname -f`/" < /etc/certparams | \
+			openssl req -new -key /etc/httpd/server-ecdsa.key \
+			-out /etc/httpd/server-ecdsa.csr &>/dev/null
+	fi
+
+	if [ ! -f "/etc/httpd/server.crt" ]; then
+		boot_mesg "Signing RSA certificate..."
+		openssl x509 -req -days 999999 -sha256 \
+			-in /etc/httpd/server.csr \
+			-signkey /etc/httpd/server.key \
+			-out /etc/httpd/server.crt &>/dev/null
+		evaluate_retval
+	fi
+
+	if [ ! -f "/etc/httpd/server-ecdsa.crt" ]; then
+		boot_mesg "Signing ECDSA certificate..."
+		openssl x509 -req -days 999999 -sha256 \
+			-in /etc/httpd/server-ecdsa.csr \
+			-signkey /etc/httpd/server-ecdsa.key \
+			-out /etc/httpd/server-ecdsa.crt &>/dev/null
+		evaluate_retval
+	fi
+}
+
+case "$1" in
+	start)
+		# Generate all required certificates
+		generate_certificates
+
+		# Update hostname
+		echo "ServerName ${HOSTNAME}" > /etc/httpd/conf/hostname.conf
+
+		boot_mesg "Starting Apache daemon..."
+		/usr/sbin/apachectl -k start
+		evaluate_retval
+		;;
+
+	stop)
+		boot_mesg "Stopping Apache daemon..."
+		/usr/sbin/apachectl -k stop
+		evaluate_retval
+		;;
+
+	restart)
+		$0 stop
+		$0 start
+		;;
+
+	reload)
+		boot_mesg "Reloading Apache daemon..."
+		/usr/sbin/apachectl -k graceful
+		evaluate_retval
+		;;
+
+	status)
+		statusproc /usr/sbin/httpd
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart|status}"
+		exit 1
+		;;
+esac

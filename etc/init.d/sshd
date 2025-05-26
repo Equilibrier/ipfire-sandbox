@@ -1,0 +1,74 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. $rc_functions
+
+case "$1" in
+    start)
+	for algo in rsa ecdsa ed25519; do
+		keyfile="/etc/ssh/ssh_host_${algo}_key"
+
+		# If the key already exists, there is nothing to do.
+		[ -e "${keyfile}" ] && continue
+
+		boot_mesg "Generating SSH key (${algo})..."
+		ssh-keygen -qf "${keyfile}" -N '' -t ${algo}
+		evaluate_retval
+	done
+
+        [ -e "/var/ipfire/remote/enablessh" ] || exit 0 # SSH is not enabled
+        boot_mesg "Starting SSH Server..."
+        loadproc -f /usr/sbin/sshd
+
+        # Also prevent ssh from being killed by out of memory conditions
+	(
+		sleep 3
+		pid=$(cat /var/run/sshd.pid 2>/dev/null)
+		[ -n "${pid}" ] && echo "-16" > "/proc/${pid}/oom_score_adj"
+	) &
+        ;;
+
+    stop)
+        boot_mesg "Stopping SSH Server..."
+        killproc -p "/var/run/sshd.pid" /usr/sbin/sshd || true
+        ;;
+
+    reload)
+        boot_mesg "Reloading SSH Server..."
+        reloadproc /usr/sbin/sshd
+        ;;
+
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+
+    status)
+        statusproc /usr/sbin/sshd
+        ;;
+
+    *)
+        echo "Usage: $0 {start|stop|reload|restart|status}"
+        exit 1
+        ;;
+esac

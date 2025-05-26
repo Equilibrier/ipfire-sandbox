@@ -1,0 +1,63 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2023  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+eval $(/usr/local/bin/readhash /var/ipfire/main/security)
+
+case "${1}" in
+	start)
+		# Nothing to do here when SMT is forced on
+		if [ "${ENABLE_SMT}" = "on" ]; then
+			exit 0
+		fi
+
+		# Nothing to do when SMT is not enabled or not supported anyways
+		if [ "$(</sys/devices/system/cpu/smt/control)" != "on" ]; then
+			exit 0
+		fi 2>/dev/null
+
+		# Do not disable SMT inside virtual machines
+		if running_on_hypervisor; then
+			exit 0
+		fi
+
+		# Disable SMT when the processor is vulnerable if SMT is enabled
+		for vuln in $(ls /sys/devices/system/cpu/vulnerabilities/*) ; do
+			if [ -r "${vuln}" ] && \
+					[[ "$(<${vuln})" =~ "SMT vulnerable" ]]; then
+				# Disable SMT
+				boot_mesg "Disabling Simultaneous Multi-Threading (SMT)..."
+				echo "forceoff" > /sys/devices/system/cpu/smt/control
+				echo_ok
+
+				# No need to check any further when we have disabled SMT already
+				break
+			fi
+		done
+		;;
+
+	*)
+		echo "Usage: ${0} {start}"
+		exit 1
+		;;
+esac

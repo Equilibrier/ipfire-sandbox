@@ -1,0 +1,50 @@
+#!/bin/bash
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+# Exit if firstsetup was already done...
+if [ -e /var/ipfire/main/firstsetup_ok ]; then
+	exit 0;
+fi
+
+# disable consoles if tty are not present
+openvt -f -w -- /bin/sh -c echo > /dev/null 2>&1
+if [ ! "${?}" == "0" ]; then
+	# Disable console on tty2-6
+	sed -i -e "s|2:2345:respawn:|#2:2345:respawn:|g" /etc/inittab
+	sed -i -e "s|3:2345:respawn:|#3:2345:respawn:|g" /etc/inittab
+	sed -i -e "s|4:2345:respawn:|#4:2345:respawn:|g" etc/inittab
+	sed -i -e "s|5:2345:respawn:|#5:2345:respawn:|g" /etc/inittab
+	sed -i -e "s|6:2345:respawn:|#6:2345:respawn:|g" /etc/inittab
+fi
+
+# reload inittab
+/sbin/init q
+#
+/etc/init.d/sysklogd start
+export LANG=en_US.utf8
+/usr/sbin/setup /dev/tty2 INSTALL
+if [ "${?}" == "1" ]; then
+	echo Setup not finished. Rebooting ...
+	reboot -f
+fi
+
+/etc/init.d/sysklogd stop
+touch /var/ipfire/main/firstsetup_ok

@@ -1,0 +1,86 @@
+#!/bin/bash
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+
+function init_table() {
+	# Check if table does already exist. If not we add it.
+	if (ip rule | grep -q "static" >/dev/null 2>&1); then
+		return
+	fi
+
+	ip rule add table static
+}
+
+function create_all_routes() {
+	local file=${1}
+	shift
+
+	# Remote all routes.
+	ip route flush table static >/dev/null 2>&1
+
+	local status
+	local network
+	local gateway
+	local remark
+
+	# Read all routes from the configuration file and add the enabled ones
+	# immediately.
+	while IFS=, read status network gateway remark; do
+		[ "${status}" = "on" ] || continue
+
+		if [ -z "${network}" -o -z "${gateway}" ]; then
+			# Silently skipping invalid routes.
+			continue
+		fi
+
+		ip route add ${network} via ${gateway} table static proto static
+	done < ${file}
+}
+
+CONFIGFILE="/var/ipfire/main/routing"
+
+case "${1}" in
+	start|reload)
+		boot_mesg "Adding static routes..."
+
+		# First, initialize the table
+		init_table
+
+		# Add all routes
+		create_all_routes ${CONFIGFILE}
+
+		evaluate_retval
+		;;
+
+	stop)
+		boot_mesg "Removing static routes..."
+		ip route flush table static >/dev/null 2>&1
+		evaluate_retval
+		;;
+
+	*)
+		echo "Usage: ${0} {start|stop|reload}"
+		exit 1
+		;;
+esac

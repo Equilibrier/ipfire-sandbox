@@ -1,0 +1,86 @@
+#!/bin/sh
+###############################################################################
+#                                                                             #
+# IPFire.org - A linux based firewall                                         #
+# Copyright (C) 2007-2022  IPFire Team  <info@ipfire.org>                     #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU General Public License as published by        #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU General Public License for more details.                                #
+#                                                                             #
+# You should have received a copy of the GNU General Public License           #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+#                                                                             #
+###############################################################################
+
+. /etc/sysconfig/rc
+. ${rc_functions}
+
+case "${1}" in
+	start)
+		boot_mesg "Populating /dev with device nodes..."
+		if ! grep -q '[[:space:]]sysfs' /proc/mounts; then
+			echo_failure
+			boot_mesg -n "FAILURE:\n\nUnable to create" ${FAILURE}
+			boot_mesg -n " devices without a SysFS filesystem"
+			boot_mesg -n "\n\nAfter you press Enter, this system"
+			boot_mesg -n " will be halted and powered off."
+			boot_mesg -n "\n\nPress Enter to continue..." ${INFO}
+			boot_mesg "" ${NORMAL}
+			read ENTER
+			/etc/rc.d/init.d/halt stop
+		fi
+		if ! grep -q '[[:space:]]/dev' /proc/mounts; then
+			echo_failure
+			boot_mesg -n "FAILURE:\n\nKernel has no devtmpfs/mount" ${FAILURE}
+			boot_mesg -n " support but this is needed for udev."
+			boot_mesg -n "\n\nAfter you press Enter, this system"
+			boot_mesg -n " will be halted and powered off."
+			boot_mesg -n "\n\nPress Enter to continue..." ${INFO}
+			boot_mesg "" ${NORMAL}
+			read ENTER
+			/etc/rc.d/init.d/halt stop
+		fi
+
+		if ! grep -q '[[:space:]]/dev/shm' /proc/mounts; then
+			mkdir -p /dev/shm
+			mount -t tmpfs tmpfs -o nosuid,nodev,noexec /dev/shm
+		fi
+
+		if ! grep -q '[[:space:]]/dev/pts' /proc/mounts; then
+			mkdir -p /dev/pts
+			mount -t devpts devpts -o nosuid,noexec,gid=5,mode=620 /dev/pts
+		fi
+
+		# Start the udev daemon to continually watch for, and act on,
+		# uevents
+		boot_mesg "Starting udev daemon..."
+		loadproc udevd --daemon
+
+		# Now traverse /sys in order to "coldplug" devices that have
+		# already been discovered
+		/bin/udevadm trigger --action=add
+
+		# Now wait for udevd to process the uevents we triggered
+		/bin/udevadm settle
+		evaluate_retval
+		;;
+
+	restart)
+		boot_mesg "Stopping udev daemon..."
+		killproc udevd
+
+		exec $0 start
+		;;
+
+	*)
+		echo "Usage ${0} {start}"
+		exit 1
+		;;
+esac
